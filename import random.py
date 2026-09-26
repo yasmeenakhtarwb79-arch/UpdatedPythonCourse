@@ -1,4 +1,3 @@
-
 import random
 
 def start_guessing_game():
@@ -27,6 +26,3 @@ def start_guessing_game():
 
 # Call the function to start the game
 start_guessing_game()
-
-
-
