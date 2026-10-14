@@ -1,172 +1,164 @@
-import base64
-import json
-import os
-import secrets
-import string
-import tkinter as tk
-from tkinter import messagebox, simpledialog, ttk
+import random
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import List, Optional
 
-try:
-	from cryptography.fernet import Fernet, InvalidToken
-	from cryptography.hazmat.primitives import hashes
-	from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-except ImportError:
-	Fernet = InvalidToken = hashes = PBKDF2HMAC = None
+app = FastAPI(title="Ultimate Quiz Game API")
 
+# یہ کوئز کا پورا ڈیٹا (Questions Base) ہے جو آپ کے کوڈ سے لیا گیا ہے
+QUIZ_DATA = {
+    "section_1": [
+        {
+            "id": 1,
+            "topic": "World Geography",
+            "question": "Which is the largest and deepest ocean on Earth?",
+            "options": ["A) Indian Ocean", "B) Atlantic Ocean", "C) Pacific Ocean", "D) Arctic Ocean"],
+            "correct": "c",
+            "hint": "Its name means 'peaceful', separating Asia from the Americas."
+        },
+        {
+            "id": 2,
+            "topic": "International Sports",
+            "question": "How many times has Pakistan won the Hockey World Cup?",
+            "options": ["A) 2 Times", "B) 3 Times", "C) 4 Times", "D) 5 Times"],
+            "correct": "c",
+            "hint": "Pakistan holds the world record for the most World Cup titles."
+        }
+    ],
+    "section_2": [
+        {
+            "id": 3,
+            "topic": "General Knowledge",
+            "question": "Which of the following is the national bird of Pakistan?",
+            "options": ["A) Shaheen", "B) Parrot", "C) Chakor", "D) Pigeon"],
+            "correct": "c",
+            "hint": "It is a beautiful mountain bird known for its legendary love for the moon."
+        },
+        {
+            "id": 4,
+            "topic": "Basic Science",
+            "question": "What is the chemical formula of water?",
+            "options": ["A) CO2", "B) H2O", "C) O2", "D) NaCl"],
+            "correct": "b",
+            "hint": "It consists of two hydrogen atoms and one oxygen atom."
+        },
+        {
+            "id": 5,
+            "topic": "Basic Science",
+            "question": "Which gas do plants absorb from the atmosphere to make their food?",
+            "options": ["A) Oxygen", "B) Nitrogen", "C) Hydrogen", "D) Carbon Dioxide"],
+            "correct": "d",
+            "hint": "This is the gas that humans exhale during breathing."
+        }
+    ],
+    "section_3": [
+        {
+            "id": 6,
+            "topic": "Punjab Culture",
+            "question": "Which is the most famous and energetic traditional dance of Punjab?",
+            "options": ["A) Jhumar", "B) Bhangra", "C) Luddi", "D) Sammi"],
+            "correct": "b",
+            "hint": "This dance is performed to the beat of the dhol, especially during Vaisakhi festivals."
+        },
+        {
+            "id": 7,
+            "topic": "Punjab History",
+            "question": "Who wrote the famous Punjabi romantic folk tale 'Heer Ranjha'?",
+            "options": ["A) Bulleh Shah", "B) Mian Muhammad Baksh", "C) Waris Shah", "D) Sultan Bahu"],
+            "correct": "c",
+            "hint": "This legendary poet is often referred to as the Shakespeare of the Punjabi language."
+        },
+        {
+            "id": 8,
+            "topic": "Traditional Sports",
+            "question": "Which is the most popular traditional sport played in the villages of Punjab?",
+            "options": ["A) Kabaddi", "B) Cricket", "C) Football", "D) Hockey"],
+            "correct": "a",
+            "hint": "In this sport, a player constantly repeats a specific word while entering the opponent's court."
+        }
+    ]
+}
 
-VAULT_PATH = os.path.join(os.path.expanduser("~"), ".tk_password_manager.json")
-ITERATIONS = 390_000
+# یوزر کا جواب چیک کرنے کے لیے ایک ڈیٹا فارمیٹ (Model)
+class AnswerSubmission(BaseModel):
+    question_id: int
+    user_answer: str
+    used_hint: bool = False
 
+# 🛑 ENDPOINT 1: تمام سوالات کو ترتیب اور شفل (Shuffle) کر کے حاصل کرنے کا لنک
+@app.get("/quiz/questions")
+def get_quiz_questions():
+    s1 = list(QUIZ_DATA["section_1"])
+    s2 = list(QUIZ_DATA["section_2"])
+    s3 = list(QUIZ_DATA["section_3"])
+    
+    # آپ کے کوڈ کے مطابق ہر سیکشن کے اندر شفلنگ کرنا
+    random.shuffle(s1)
+    random.shuffle(s2)
+    random.shuffle(s3)
+    
+    all_questions = s1 + s2 + s3
+    
+    # سیکیورٹی کے لیے فرنٹ اینڈ کو جواب (correct option) نہیں بھیجیں گے
+    questions_for_user = []
+    for q in all_questions:
+        questions_for_user.append({
+            "id": q["id"],
+            "topic": q["topic"],
+            "question": q["question"],
+            "options": q["options"],
+            "hint": q["hint"]
+        })
+        
+    return {"total_questions": len(questions_for_user), "questions": questions_for_user}
 
-def derive_key(password, salt):
-	kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=ITERATIONS)
-	return base64.urlsafe_b64encode(kdf.derive(password.encode("utf-8")))
+# 🛑 ENDPOINT 2: یوزر کے جواب کو چیک کر کے نمبر (Points) دینے کا لنک
+@app.post("/quiz/submit-answer")
+def submit_answer(submission: AnswerSubmission):
+    # تمام سیکشنز میں سے وہ سوال ڈھونڈنا جس کا یوزر نے جواب دیا ہے
+    all_questions = QUIZ_DATA["section_1"] + QUIZ_DATA["section_2"] + QUIZ_DATA["section_3"]
+    target_question = next((q for q in all_questions if q["id"] == submission.question_id), None)
+    
+    if not target_question:
+        raise HTTPException(status_code=404, detail="سوال نہیں ملا!")
+        
+    is_correct = submission.user_answer.strip().lower() == target_question["correct"]
+    
+    if is_correct:
+        # اگر ہنٹ استعمال کی ہو تو 5 نمبر، ورنہ 10 نمبر
+        points = 5 if submission.used_hint else 10
+        return {
+            "status": "correct",
+            "message": f"✅ Correct Answer! You earned +{points} points.",
+            "points": points,
+            "correct_option": target_question["correct"]
+        }
+    else:
+        return {
+            "status": "wrong",
+            "message": f"❌ Wrong Answer! -5 points.",
+            "points": -5,
+            "correct_option": target_question["correct"]
+        }
 
-
-class PasswordManager:
-	def __init__(self, root):
-		self.root = root
-		self.root.title("Password Manager")
-		self.root.geometry("620x460")
-		self.root.minsize(520, 380)
-		self.entries = []
-		self.fernet = None
-
-		if Fernet is None:
-			messagebox.showerror("Dependency required", "Install cryptography first:\n\npip install cryptography", parent=root)
-			root.destroy()
-			return
-		self.build_ui()
-		self.unlock()
-
-	def build_ui(self):
-		main = ttk.Frame(self.root, padding=14)
-		main.pack(fill="both", expand=True)
-		form = ttk.LabelFrame(main, text="Add account", padding=10)
-		form.pack(fill="x")
-		form.columnconfigure(1, weight=1)
-
-		self.site = tk.StringVar()
-		self.username = tk.StringVar()
-		self.password = tk.StringVar()
-		for row, (label, variable) in enumerate((("Website / service", self.site), ("Username", self.username), ("Password", self.password))):
-			ttk.Label(form, text=label + ":").grid(row=row, column=0, sticky="w", padx=(0, 10), pady=4)
-			ttk.Entry(form, textvariable=variable, show="•" if row == 2 else "").grid(row=row, column=1, sticky="ew", pady=4)
-		ttk.Button(form, text="Generate", command=self.generate).grid(row=2, column=2, padx=(8, 0))
-		ttk.Button(form, text="Save account", command=self.save).grid(row=3, column=1, sticky="e", pady=(8, 0))
-
-		listing = ttk.LabelFrame(main, text="Saved accounts", padding=8)
-		listing.pack(fill="both", expand=True, pady=12)
-		listing.columnconfigure(0, weight=1)
-		listing.rowconfigure(0, weight=1)
-		self.tree = ttk.Treeview(listing, columns=("site", "username"), show="headings", selectmode="browse")
-		self.tree.heading("site", text="Website / service")
-		self.tree.heading("username", text="Username")
-		self.tree.grid(row=0, column=0, sticky="nsew")
-		scrollbar = ttk.Scrollbar(listing, orient="vertical", command=self.tree.yview)
-		scrollbar.grid(row=0, column=1, sticky="ns")
-		self.tree.configure(yscrollcommand=scrollbar.set)
-		buttons = ttk.Frame(main)
-		buttons.pack(fill="x")
-		ttk.Button(buttons, text="Copy selected password", command=self.copy_selected).pack(side="left")
-		ttk.Button(buttons, text="Delete selected", command=self.delete_selected).pack(side="left", padx=8)
-		ttk.Label(buttons, text="Encrypted local vault").pack(side="right")
-
-	def unlock(self):
-		new_vault = not os.path.exists(VAULT_PATH)
-		prompt = "Create a master password for your new vault:" if new_vault else "Enter your master password:"
-		password = simpledialog.askstring("Unlock vault", prompt, show="•", parent=self.root)
-		if password is None:
-			self.root.destroy()
-			return
-		if not password:
-			messagebox.showerror("Invalid password", "Master password cannot be empty.", parent=self.root)
-			self.root.destroy()
-			return
-		try:
-			if new_vault:
-				self.salt = os.urandom(16)
-				self.fernet = Fernet(derive_key(password, self.salt))
-				self.write_vault()
-			else:
-				with open(VAULT_PATH, encoding="utf-8") as file:
-					stored = json.load(file)
-				if stored.get("version") != 1:
-					raise ValueError("Unsupported vault version")
-				self.salt = base64.b64decode(stored["salt"])
-				self.fernet = Fernet(derive_key(password, self.salt))
-				decrypted = self.fernet.decrypt(stored["data"].encode("ascii"))
-				self.entries = json.loads(decrypted.decode("utf-8"))
-				if not isinstance(self.entries, list):
-					raise ValueError("Invalid vault data")
-			self.refresh()
-		except (InvalidToken, KeyError, ValueError, OSError, json.JSONDecodeError):
-			messagebox.showerror("Vault error", "Unable to open the vault. Check the master password or vault file.", parent=self.root)
-			self.root.destroy()
-
-	def write_vault(self):
-		encrypted = self.fernet.encrypt(json.dumps(self.entries).encode("utf-8")).decode("ascii")
-		data = {"version": 1, "salt": base64.b64encode(self.salt).decode("ascii"), "data": encrypted}
-		temporary = VAULT_PATH + ".tmp"
-		with open(temporary, "w", encoding="utf-8") as file:
-			json.dump(data, file)
-		os.replace(temporary, VAULT_PATH)
-
-	def refresh(self):
-		self.tree.delete(*self.tree.get_children())
-		for index, item in enumerate(self.entries):
-			self.tree.insert("", "end", iid=str(index), values=(item["site"], item["username"]))
-
-	def generate(self):
-		alphabet = string.ascii_letters + string.digits + "!@#$%^&*()-_=+[]{}?"
-		self.password.set("".join(secrets.choice(alphabet) for _ in range(20)))
-
-	def save(self):
-		site, username, password = self.site.get().strip(), self.username.get().strip(), self.password.get()
-		if not site or not username or not password:
-			messagebox.showwarning("Missing details", "Enter a website, username, and password.", parent=self.root)
-			return
-		self.entries.append({"site": site, "username": username, "password": password})
-		try:
-			self.write_vault()
-		except OSError as error:
-			self.entries.pop()
-			messagebox.showerror("Save error", str(error), parent=self.root)
-			return
-		self.refresh()
-		self.site.set("")
-		self.username.set("")
-		self.password.set("")
-
-	def copy_selected(self):
-		selection = self.tree.selection()
-		if not selection:
-			messagebox.showinfo("Select account", "Choose an account first.", parent=self.root)
-			return
-		self.root.clipboard_clear()
-		self.root.clipboard_append(self.entries[int(selection[0])]["password"])
-		self.root.update()
-		messagebox.showinfo("Copied", "Password copied to clipboard.", parent=self.root)
-
-	def delete_selected(self):
-		selection = self.tree.selection()
-		if not selection:
-			messagebox.showinfo("Select account", "Choose an account first.", parent=self.root)
-			return
-		if not messagebox.askyesno("Delete account", "Permanently delete this account?", parent=self.root):
-			return
-		index = int(selection[0])
-		removed = self.entries.pop(index)
-		try:
-			self.write_vault()
-		except OSError as error:
-			self.entries.insert(index, removed)
-			messagebox.showerror("Save error", str(error), parent=self.root)
-			return
-		self.refresh()
-
-
-if __name__ == "__main__":
-	app = tk.Tk()
-	PasswordManager(app)
-	app.mainloop()
+# 🛑 ENDPOINT 3: 50:50 لائف لائن کو سنبھالنے کا لنک
+@app.get("/quiz/lifeline-50/{question_id}")
+def trigger_50_50(question_id: int):
+    all_questions = QUIZ_DATA["section_1"] + QUIZ_DATA["section_2"] + QUIZ_DATA["section_3"]
+    q = next((q for q in all_questions if q["id"] == question_id), None)
+    
+    if not q:
+        raise HTTPException(status_code=404, detail="سوال نہیں ملا!")
+        
+    correct_letter = q['correct']
+    filtered_opts = [opt for opt in q['options'] if opt.lower().startswith(correct_letter)]
+    wrongs = [opt for opt in q['options'] if not opt.lower().startswith(correct_letter)]
+    
+    # ایک غلط آپشن رینڈم چننا
+    filtered_opts.append(random.choice(wrongs))
+    filtered_opts.sort()
+    
+    return {
+        "question_id": question_id,
+        "remaining_options": filtered_opts
+    }
